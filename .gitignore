@@ -1,0 +1,39 @@
+# --- Agent orchestration / private (never tracked) ---
+do/
+docs/
+.env
+CLAUDE.md
+scripts/
+.githooks/
+
+# Plans
+*.plan.md
+plan.md
+plans/
+
+# Data / generated working state
+/data/
+/var/
+/outputs/
+/tmp/
+
+# --- Rust / Tauri ---
+src-tauri/target/
+src-tauri/gen/
+
+# --- Node / frontend ---
+node_modules/
+dist/
+.svelte-kit/
+
+# --- Build artifacts ---
+*.dmg
+*.app.tar.gz
+
+# --- Editor / OS ---
+.DS_Store
+._*
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
