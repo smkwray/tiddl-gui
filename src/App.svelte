@@ -46,6 +46,25 @@
     store.auth = await invoke<AuthStatus>("get_auth_status");
   }
 
+  // The access token is short-lived (hours); the refresh token is long-lived.
+  // So on most launches the token has expired but can be renewed silently — the
+  // user shouldn't have to do anything. `tiddl auth login` is a no-op while any
+  // token file exists ("Already logged in"), so only `auth_refresh` fixes this.
+  // "Sign in" is reserved for a genuine login (no token, or a dead refresh token).
+  async function autoRefreshIfExpired() {
+    if (!store.auth || store.auth.authed || !store.auth.expired) return;
+    store.refreshingAuth = true;
+    try {
+      const msg = await invoke<string>("auth_refresh");
+      store.appendLog(`auto token refresh: ${msg}`);
+    } catch (e) {
+      store.appendLog(`auto token refresh failed: ${e}`);
+    } finally {
+      await refreshAuth();
+      store.refreshingAuth = false;
+    }
+  }
+
   async function reg<T>(name: string, handler: (p: T) => void) {
     const un = await listen<T>(name, (e) => handler(e.payload));
     if (destroyed) un();
@@ -55,6 +74,7 @@
   onMount(async () => {
     store.initTheme();
     await refreshAll();
+    await autoRefreshIfExpired();
     await reg<AuthFlowEvent>("auth-flow", (p) => {
       store.setAuthFlow(p);
       if (p.phase === "success" || p.phase === "already") {
@@ -193,14 +213,18 @@
   {#if store.tiddlReady}
     <TabBar active={store.activeTab} onselect={(t) => (store.activeTab = t)} />
 
-    {#if store.auth && !store.auth.authed}
+    {#if store.refreshingAuth}
+      <div class="flex items-center gap-2 px-4 py-2 text-xs" style="background: var(--panel-soft); color: var(--muted)">
+        <span>Refreshing your session…</span>
+      </div>
+    {:else if store.auth && !store.auth.authed}
       <div
         class="flex items-center gap-2 px-4 py-2 text-xs"
         style="background: color-mix(in srgb, var(--danger) 9%, transparent); color: var(--danger)"
       >
         <span>
           {store.auth.expired
-            ? "Token expired — refresh or sign in again."
+            ? "Session expired — couldn't refresh automatically. Sign in again."
             : "Not signed in — Search, Favorites and downloads need sign-in."}
         </span>
         <button class="font-semibold underline" onclick={signIn}>Sign in</button>

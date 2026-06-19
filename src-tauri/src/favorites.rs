@@ -64,7 +64,7 @@ pub fn cached() -> FavoritesCache {
     FavoritesCache::default()
 }
 
-fn read_auth() -> Result<(String, String, String), String> {
+pub(crate) fn read_auth() -> Result<(String, String, String), String> {
     let p = dirs::home_dir()
         .ok_or("no home dir")?
         .join(".tiddl/auth.json");
@@ -111,25 +111,54 @@ fn singular(plural: &str) -> &'static str {
     }
 }
 
-/// One read-only GET to the streaming API with the user's token.
-fn api_get(token: &str, url: &str) -> Result<serde_json::Value, String> {
+enum GetErr {
+    Unauthorized,
+    Other(String),
+}
+
+/// One raw read-only GET; a 401 is surfaced distinctly so the caller can refresh.
+fn get_json(token: &str, url: &str) -> Result<serde_json::Value, GetErr> {
     let body = match ureq::get(url)
         .set("Authorization", &format!("Bearer {token}"))
         .set("Accept", "application/json")
         .timeout(std::time::Duration::from_secs(20))
         .call()
     {
-        Ok(r) => r.into_string().map_err(|e| format!("read body: {e}"))?,
-        Err(ureq::Error::Status(401, _)) => {
-            return Err("The service rejected the token (401) — refresh or sign in again".into())
-        }
+        Ok(r) => r.into_string().map_err(|e| GetErr::Other(format!("read body: {e}")))?,
+        Err(ureq::Error::Status(401, _)) => return Err(GetErr::Unauthorized),
         Err(ureq::Error::Status(code, r)) => {
             let detail = r.into_string().unwrap_or_default();
-            return Err(format!("API error {code}: {}", detail.chars().take(160).collect::<String>()));
+            return Err(GetErr::Other(format!(
+                "API error {code}: {}",
+                detail.chars().take(160).collect::<String>()
+            )));
         }
-        Err(e) => return Err(format!("network error: {e}")),
+        Err(e) => return Err(GetErr::Other(format!("network error: {e}"))),
     };
-    serde_json::from_str(&body).map_err(|e| format!("parse API response: {e}"))
+    serde_json::from_str(&body).map_err(|e| GetErr::Other(format!("parse API response: {e}")))
+}
+
+/// One read-only GET to the streaming API with the user's token.
+///
+/// The access token is short-lived (~hours). If it has expired mid-session, the
+/// call gets a 401 — instead of surfacing that, we transparently run a token
+/// refresh and retry ONCE, so the user never sees a 401 they have to act on.
+/// Only a genuinely dead refresh token (refresh itself fails, or the retry still
+/// 401s) bubbles up a "sign in again" message.
+pub(crate) fn api_get(token: &str, url: &str) -> Result<serde_json::Value, String> {
+    match get_json(token, url) {
+        Ok(v) => Ok(v),
+        Err(GetErr::Other(m)) => Err(m),
+        Err(GetErr::Unauthorized) => {
+            crate::tiddl::auth_refresh().map_err(|e| format!("Session expired and refresh failed: {e}"))?;
+            let (fresh, _, _) = read_auth()?;
+            match get_json(&fresh, url) {
+                Ok(v) => Ok(v),
+                Err(GetErr::Unauthorized) => Err("Session expired — sign in again".into()),
+                Err(GetErr::Other(m)) => Err(m),
+            }
+        }
+    }
 }
 
 fn fetch_type(token: &str, uid: &str, cc: &str, plural: &str) -> Result<Vec<FavItem>, String> {
@@ -358,6 +387,50 @@ mod tests {
     use super::*;
     // Hits the live streaming API using ~/.tiddl/auth.json. Run explicitly:
     //   cargo test --lib favorites -- --ignored --nocapture
+    // Faithfully simulates a normally-expired session — a server-rejected access
+    // token AND a past `expires_at` (the state `tiddl auth refresh` actually acts on;
+    // it no-ops while expires_at is still in the future). api_get must transparently
+    // refresh (via the valid refresh_token) and retry, so the UI never surfaces a 401.
+    // Restores the original auth.json on drop, even if the assertions panic.
+    struct AuthRestore(Vec<u8>, std::path::PathBuf);
+    impl Drop for AuthRestore {
+        fn drop(&mut self) {
+            let _ = std::fs::write(&self.1, &self.0);
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn api_get_transparently_refreshes_on_401() {
+        let path = dirs::home_dir().unwrap().join(".tiddl/auth.json");
+        let orig = std::fs::read(&path).expect("auth.json");
+        let _restore = AuthRestore(orig.clone(), path.clone());
+
+        // Tamper the access token (→ server 401) and expire it (→ tiddl will refresh).
+        let mut d: serde_json::Value = serde_json::from_slice(&orig).unwrap();
+        let tok = d["token"].as_str().unwrap();
+        let parts: Vec<&str> = tok.split('.').collect();
+        let tampered = if parts.len() == 3 {
+            format!("{}.{}.{}ZZZZ", parts[0], parts[1], &parts[2][..parts[2].len().saturating_sub(4)])
+        } else {
+            format!("{tok}ZZZZ")
+        };
+        d["token"] = serde_json::Value::String(tampered);
+        d["expires_at"] = serde_json::json!(1);
+        std::fs::write(&path, serde_json::to_vec(&d).unwrap()).unwrap();
+
+        let (bad_token, _uid, cc) = read_auth().expect("auth.json");
+        let url = format!(
+            "https://api.tidal.com/v1/search?query=closer&countryCode={cc}&limit=1&types=TRACKS"
+        );
+        let v = api_get(&bad_token, &url).expect("must refresh+retry, not surface a 401");
+        assert!(v.get("tracks").and_then(|t| t.get("items")).is_some(), "got: {v}");
+
+        // The on-disk token must now be a fresh, non-expired one.
+        let after: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert!(after["expires_at"].as_i64().unwrap() > 1, "token should have been refreshed");
+    }
+
     #[test]
     #[ignore]
     fn fetch_live_favorites() {

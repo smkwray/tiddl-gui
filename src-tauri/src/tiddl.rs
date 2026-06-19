@@ -5,21 +5,20 @@
 
 use serde::Serialize;
 use std::ffi::OsString;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Read};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 
 use crate::config;
 use crate::queue::QueueState;
 
 pub const ALLOWED_QUALITIES: [&str; 4] = ["low", "normal", "high", "max"];
-pub const SEARCH_TYPES: [&str; 5] = ["track", "album", "playlist", "artist", "video"];
 pub const FAV_TYPES: [&str; 5] = ["track", "album", "playlist", "artist", "video"];
 
 // ---------------------------------------------------------------------------
@@ -657,147 +656,6 @@ fn run_simple(args: &[&str]) -> Result<String, String> {
             combined.trim().to_string()
         })
     }
-}
-
-// ---------------------------------------------------------------------------
-// Search (table scrape — no download)
-// ---------------------------------------------------------------------------
-
-pub fn run_search(query: String, kinds: Vec<String>, limit: u32) -> Result<Vec<SearchResult>, String> {
-    let q = query.trim().replace(['\r', '\n', '\0'], " ");
-    if q.is_empty() {
-        return Err("Enter a search query".into());
-    }
-    if q.starts_with('-') {
-        // tiddl/typer would parse a leading-dash query as a flag.
-        return Err("search query can't start with '-'".into());
-    }
-    let tiddl = resolve_tiddl().ok_or("tiddl not found — was it uninstalled?")?;
-
-    let mut allowed: Vec<String> = Vec::new();
-    for k in kinds {
-        let k = k.to_lowercase();
-        if SEARCH_TYPES.contains(&k.as_str()) && !allowed.contains(&k) {
-            allowed.push(k);
-        }
-    }
-    let limit = limit.clamp(1, 25);
-
-    let mut args: Vec<String> = vec!["download".into(), "search".into(), q];
-    for k in &allowed {
-        args.push("-t".into());
-        args.push(k.clone());
-    }
-    args.push("-n".into());
-    args.push(limit.to_string());
-
-    let mut child = tiddl_command(&tiddl)
-        .args(&args)
-        .env("COLUMNS", "240")
-        .env("TERM", "dumb")
-        .env("NO_COLOR", "1")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn_in_group()
-        .map_err(|e| format!("Failed to start tiddl search: {e}"))?;
-
-    // Quit the interactive picker without downloading: send "q" then EOF.
-    if let Some(mut sin) = child.stdin.take() {
-        let _ = sin.write_all(b"q\n");
-        // drop closes stdin (EOF)
-    }
-
-    // 30s watchdog: never rely on tiddl self-exiting.
-    let pid = child.id();
-    let done = Arc::new(AtomicBool::new(false));
-    {
-        let done = done.clone();
-        thread::spawn(move || {
-            let start = Instant::now();
-            while start.elapsed() < Duration::from_secs(30) {
-                if done.load(Ordering::SeqCst) {
-                    return;
-                }
-                thread::sleep(Duration::from_millis(200));
-            }
-            if !done.load(Ordering::SeqCst) {
-                kill_group(pid);
-            }
-        });
-    }
-
-    let output = child.wait_with_output().map_err(|e| format!("search failed: {e}"))?;
-    done.store(true, Ordering::SeqCst);
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let results = parse_search_table(&stdout, &allowed);
-
-    if results.is_empty() {
-        if output.status.success() {
-            // Distinguish "no matches" from "couldn't parse" — fail loud on the
-            // latter. Accept both the Unicode (│) and ASCII (|) rich borders.
-            let looks_like_table = stdout.contains('│') || stdout.contains('|');
-            if looks_like_table {
-                return Ok(vec![]); // table rendered, just no result rows
-            }
-            return Err("couldn't read search results from tiddl output".into());
-        }
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let msg = stderr
-            .lines()
-            .map(strip_ansi)
-            .find(|l| !l.trim().is_empty() && !l.contains("Auth token expires in"))
-            .unwrap_or_else(|| "search failed".into());
-        return Err(msg.trim().to_string());
-    }
-    Ok(results)
-}
-
-fn parse_search_table(stdout: &str, allowed: &[String]) -> Vec<SearchResult> {
-    let mut out = Vec::new();
-    // tiddl prepends the "top hit" AND lists it again in its type group — dedup
-    // by kind/id so the same item doesn't appear twice.
-    let mut seen = std::collections::HashSet::new();
-    for raw in stdout.lines() {
-        let line = strip_ansi(raw);
-        // tiddl prints results in a rich Table inside a Panel. rich draws the
-        // column border as Unicode │ normally, but downgrades to ASCII | on a
-        // legacy/safe-box Windows console (our output is piped + non-VT, so this
-        // is the Windows case). Accept whichever separator the line uses; the
-        // doubled Panel+Table border yields the same cell layout either way.
-        let sep = if line.contains('│') {
-            '│'
-        } else if line.contains('|') {
-            '|'
-        } else {
-            continue;
-        };
-        let cells: Vec<String> = line.split(sep).map(|c| c.trim().to_string()).collect();
-        // Double border: cells = ["", "", num, kind, title, id, "", ""]
-        if cells.len() < 6 {
-            continue;
-        }
-        let num = match cells[2].parse::<u32>() {
-            Ok(n) if n > 0 => n,
-            _ => continue,
-        };
-        let kind = cells[3].to_lowercase();
-        let title = cells[4].clone();
-        let id = cells[5].clone();
-        if id.is_empty() || !SEARCH_TYPES.contains(&kind.as_str()) {
-            continue;
-        }
-        if !allowed.is_empty() && !allowed.contains(&kind) {
-            continue;
-        }
-        let resource = format!("{kind}/{id}");
-        if !seen.insert(resource.clone()) {
-            continue; // already saw this kind/id (top-hit duplicate)
-        }
-        out.push(SearchResult { num, kind, title, id, resource });
-    }
-    out
 }
 
 // ---------------------------------------------------------------------------

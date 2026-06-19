@@ -34,6 +34,7 @@ class AppStore {
   logCollapsed = $state(true);
   authFlow = $state<AuthFlowEvent | null>(null);
   showLogin = $state(false);
+  refreshingAuth = $state(false); // true while a silent token refresh is in flight
   activeTab = $state<TabId>("download");
   theme = $state<"dark" | "light">("dark");
   showHelp = $state(false);

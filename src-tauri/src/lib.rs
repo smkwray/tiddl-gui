@@ -1,6 +1,7 @@
 mod config;
 mod favorites;
 mod queue;
+mod search;
 mod tiddl;
 
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -56,7 +57,7 @@ async fn auth_refresh() -> Result<String, String> {
 
 #[tauri::command]
 async fn search(query: String, kinds: Vec<String>, limit: u32) -> Result<Vec<SearchResult>, String> {
-    tauri::async_runtime::spawn_blocking(move || tiddl::run_search(query, kinds, limit))
+    tauri::async_runtime::spawn_blocking(move || search::run_search_api(query, kinds, limit))
         .await
         .map_err(|e| format!("search task failed: {e}"))?
 }
