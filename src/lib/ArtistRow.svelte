@@ -32,7 +32,9 @@
       }
     }
   }
-  async function downloadArtist() {
+  // Same enqueue call for both actions (as for track rows in Search): "↓ Now"
+  // additionally jumps to the Download tab, "Queue" leaves you where you are.
+  async function downloadArtist(now: boolean) {
     try {
       await invoke("enqueue", {
         resources: [item.resource],
@@ -42,7 +44,8 @@
         noSkip: store.optNoSkip,
         singles: true, // grab EPs/singles too, matching the expanded view
       });
-      store.activeTab = "download";
+      store.appendLog(`queued ${item.resource}`);
+      if (now) store.activeTab = "download";
     } catch (e) {
       err = String(e);
     }
@@ -54,11 +57,18 @@
     <button class="w-4 shrink-0 text-xs" style="color: var(--soft)" aria-label="Expand artist" onclick={toggle}>{expanded ? "▾" : "▸"}</button>
     <span class="min-w-0 flex-1 truncate" title={label}>{label}</span>
     <button
+      class="shrink-0 rounded px-2 py-1 text-xs disabled:opacity-40"
+      style="background: var(--panel-soft)"
+      disabled={empty}
+      title={empty ? "Nothing to download — this match has no releases" : "Queue all albums, EPs & singles"}
+      onclick={() => downloadArtist(false)}>Queue</button
+    >
+    <button
       class="shrink-0 rounded px-2 py-1 text-xs font-semibold disabled:opacity-40"
       style="background: var(--accent); color: #06231f"
       disabled={empty}
-      title={empty ? "Nothing to download — this match has no releases" : "Download all albums, EPs & singles"}
-      onclick={downloadArtist}>Download artist</button
+      title={empty ? "Nothing to download — this match has no releases" : "Download all albums, EPs & singles now"}
+      onclick={() => downloadArtist(true)}>↓ Now</button
     >
   </div>
   {#if expanded}

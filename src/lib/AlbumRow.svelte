@@ -58,7 +58,9 @@
     for (const t of tracks) store.trackSel[t.resource] = v;
   }
 
-  async function enqueue(resources: string[], output: string) {
+  // Same enqueue call for both actions (as for track rows in Search): "↓ Now"
+  // additionally jumps to the Download tab, "Queue" leaves you where you are.
+  async function enqueue(resources: string[], output: string, now: boolean) {
     if (resources.length === 0) return;
     try {
       await invoke("enqueue", {
@@ -69,14 +71,16 @@
         noSkip: store.optNoSkip,
         output,
       });
-      store.activeTab = "download";
+      store.appendLog(`queued ${resources.join(", ")}`);
+      if (now) store.activeTab = "download";
     } catch (e) {
       err = String(e);
     }
   }
   // Whole album -> Albums/ via the album template. Picked tracks -> Albums/ via -o override.
-  const downloadAlbum = () => enqueue([item.resource], "");
-  const downloadSelected = () => enqueue(selResources, albumTemplate());
+  const queueAlbum = () => enqueue([item.resource], "", false);
+  const downloadAlbumNow = () => enqueue([item.resource], "", true);
+  const downloadSelected = () => enqueue(selResources, albumTemplate(), true);
 </script>
 
 <div class="border-t" style="border-color: var(--border)">
@@ -86,7 +90,8 @@
     {#if year}<span class="shrink-0 text-xs tabular-nums" style="color: var(--soft)">{year}</span>{/if}
     {#if item.tag}<span class="shrink-0 rounded px-1.5 py-0.5 text-[10px] uppercase" style="background: var(--panel-soft); color: var(--soft)">{item.tag}</span>{/if}
     {#if nTracks}<span class="shrink-0 text-xs" style="color: var(--soft)">{nTracks} tr</span>{/if}
-    <button class="shrink-0 rounded px-2 py-1 text-xs font-semibold" style="background: var(--accent); color: #06231f" onclick={downloadAlbum}>Download album</button>
+    <button class="shrink-0 rounded px-2 py-1 text-xs" style="background: var(--panel-soft)" title="Add this album to the queue" onclick={queueAlbum}>Queue</button>
+    <button class="shrink-0 rounded px-2 py-1 text-xs font-semibold" style="background: var(--accent); color: #06231f" title="Download this album now" onclick={downloadAlbumNow}>↓ Now</button>
   </div>
   {#if expanded}
     <div class="pb-2 pl-8 pr-3">

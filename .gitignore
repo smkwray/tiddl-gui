@@ -3,6 +3,7 @@ do/
 docs/
 .env
 CLAUDE.md
+AGENTS.md
 scripts/
 .githooks/
 
