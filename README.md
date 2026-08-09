@@ -1,6 +1,8 @@
-# tiddl-gui
-
-A small, native desktop GUI for the [`tiddl`](https://github.com/oskvr37/tiddl) command-line music downloader.
+<div align="center">
+  <img src="src-tauri/icons/icon.png" width="120" alt="tiddl-gui"/>
+  <h1>tiddl-gui</h1>
+  <p>A small, native desktop GUI for the <a href="https://github.com/oskvr37/tiddl"><code>tiddl</code></a> command-line music downloader.</p>
+</div>
 
 tiddl-gui is a thin graphical front-end that drives the `tiddl` binary. It's a ~14&nbsp;MB [Tauri](https://tauri.app) app (Rust + a Svelte webview).
 
