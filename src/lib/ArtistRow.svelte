@@ -35,6 +35,7 @@
   // Same enqueue call for both actions (as for track rows in Search): "↓ Now"
   // additionally jumps to the Download tab, "Queue" leaves you where you are.
   async function downloadArtist(now: boolean) {
+    err = "";
     try {
       await invoke("enqueue", {
         resources: [item.resource],
@@ -71,12 +72,13 @@
       onclick={() => downloadArtist(true)}>↓ Now</button
     >
   </div>
+  <!-- Row-level so a failed queue/download is visible while collapsed too (an album-load
+       failure also collapses the row, which used to hide its own message). -->
+  {#if err}<p class="px-3 pb-2 text-xs" style="color: var(--danger)">{err}</p>{/if}
   {#if expanded}
     <div class="ml-5 pl-1" style="border-left: 2px solid var(--border)">
       {#if loading}
         <p class="px-3 py-1 text-xs" style="color: var(--soft)">Loading albums…</p>
-      {:else if err}
-        <p class="px-3 py-1 text-xs" style="color: var(--danger)">{err}</p>
       {:else if albums.length === 0}
         <p class="px-3 py-1 text-xs" style="color: var(--soft)">No albums, EPs or singles — this match only appears via features/compilations, so downloading it gets nothing.</p>
       {:else}

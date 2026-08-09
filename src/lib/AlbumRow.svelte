@@ -62,6 +62,7 @@
   // additionally jumps to the Download tab, "Queue" leaves you where you are.
   async function enqueue(resources: string[], output: string, now: boolean) {
     if (resources.length === 0) return;
+    err = "";
     try {
       await invoke("enqueue", {
         resources,
@@ -93,12 +94,13 @@
     <button class="shrink-0 rounded px-2 py-1 text-xs" style="background: var(--panel-soft)" title="Add this album to the queue" onclick={queueAlbum}>Queue</button>
     <button class="shrink-0 rounded px-2 py-1 text-xs font-semibold" style="background: var(--accent); color: #06231f" title="Download this album now" onclick={downloadAlbumNow}>↓ Now</button>
   </div>
+  <!-- Row-level so a failed queue/download is visible while collapsed too (a track-load
+       failure also collapses the row, which used to hide its own message). -->
+  {#if err}<p class="px-3 pb-2 text-xs" style="color: var(--danger)">{err}</p>{/if}
   {#if expanded}
     <div class="pb-2 pl-8 pr-3">
       {#if loading}
         <p class="py-1 text-xs" style="color: var(--soft)">Loading tracks…</p>
-      {:else if err}
-        <p class="py-1 text-xs" style="color: var(--danger)">{err}</p>
       {:else}
         <div class="mb-1 flex flex-wrap items-center gap-3 text-xs" style="color: var(--soft)">
           <button class="hover:underline" onclick={() => setAll(true)}>all</button>

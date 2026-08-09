@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicoh-at/tauri-v2-schema/refs/heads/main/tauri.conf.schema.json",
   "productName": "tiddl-gui",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "identifier": "com.tiddlgui.app",
   "build": {
     "frontendDist": "../dist",
