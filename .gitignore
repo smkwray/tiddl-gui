@@ -38,3 +38,6 @@ dist/
 .idea/
 Thumbs.db
 desktop.ini
+
+# Local privacy denylist
+.private-denylist
